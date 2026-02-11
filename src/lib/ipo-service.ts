@@ -68,7 +68,7 @@ interface CacheEntry {
   timestamp: number;
 }
 
-const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — IPO status changes frequently
 const cache = new Map<string, CacheEntry>();
 const CACHE_DIR = path.join(process.cwd(), ".cache");
 
@@ -415,13 +415,13 @@ function mergeIPOs(
 ): Partial<IPO>[] {
   if (apiData.length === 0) return sampleData;
 
-  // Build a set of slugs from sample data for deduplication
-  const sampleSlugs = new Set(sampleData.map((ipo) => ipo.slug));
+  // API data is live — prefer it over sample when slugs match
+  const apiSlugs = new Set(apiData.map((ipo) => ipo.slug).filter(Boolean));
 
-  // Only add API IPOs that don't already exist in sample data
-  const newFromApi = apiData.filter((ipo) => !sampleSlugs.has(ipo.slug));
+  // Use API data as source of truth for open IPOs; add sample IPOs not in API (upcoming/listed)
+  const fromSample = sampleData.filter((ipo) => !apiSlugs.has(ipo.slug!));
 
-  return [...sampleData, ...newFromApi];
+  return [...apiData, ...fromSample];
 }
 
 // ==========================================
