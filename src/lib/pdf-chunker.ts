@@ -1,6 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 
-const PAGES_PER_CHUNK = 30; // Dense PDFs (tables, images) ≈2.5K tokens/page; 30 pages keeps under 200K limit
+const PAGES_PER_CHUNK = 15; // Very dense PDFs (tables, images) can exceed 6K tokens/page; 15 pages keeps under 200K
 
 export interface PDFChunk {
   index: number;
@@ -67,14 +67,14 @@ async function createPdfChunks(
 
 /**
  * Process a PDF for analysis.
- * - ≤50 pages: return the whole PDF as a single base64 chunk (Claude reads it directly)
- * - >50 pages: split into page-based PDF chunks (dense PDFs can exceed 200K tokens otherwise)
+ * - ≤25 pages: return the whole PDF as a single base64 chunk (Claude reads it directly)
+ * - >25 pages: split into page-based PDF chunks (dense PDFs can exceed 200K tokens otherwise)
  */
 export async function splitPDF(pdfBytes: Uint8Array): Promise<PDFChunk[]> {
   const sourcePdf = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
   const totalPages = sourcePdf.getPageCount();
 
-  if (totalPages <= 50) {
+  if (totalPages <= 25) {
     const base64Data = Buffer.from(pdfBytes).toString("base64");
     return [
       {
