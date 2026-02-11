@@ -188,11 +188,11 @@ async function runSingleAnalysis(
 
   if (!client) {
     await new Promise((resolve) => setTimeout(resolve, 8000));
-    updateAnalysis(analysisId, { status: "completed", results: sampleResults });
+    await updateAnalysis(analysisId, { status: "completed", results: sampleResults });
     return;
   }
 
-  updateAnalysis(analysisId, { currentStep: "Analyzing document..." });
+  await updateAnalysis(analysisId, { currentStep: "Analyzing document..." });
 
   if (!ANALYSIS_PROMPT) {
     throw new Error("ANALYSIS_PROMPT is undefined — check ai-prompts.ts exports");
@@ -261,7 +261,7 @@ async function runSingleAnalysis(
     console.log(`[Analysis ${analysisId}] WARNING: valuation is missing from AI response`);
   }
   const results = sanitizeResults(rawResults);
-  updateAnalysis(analysisId, { status: "completed", results });
+  await updateAnalysis(analysisId, { status: "completed", results });
 }
 
 // ==========================================
@@ -392,12 +392,12 @@ async function runChunkedAnalysis(
 
   if (!client) {
     await new Promise((resolve) => setTimeout(resolve, 8000));
-    updateAnalysis(analysisId, { status: "completed", results: sampleResults });
+    await updateAnalysis(analysisId, { status: "completed", results: sampleResults });
     return;
   }
 
   const totalChunks = chunks.length;
-  updateAnalysis(analysisId, {
+  await updateAnalysis(analysisId, {
     totalChunks,
     completedChunks: 0,
     currentStep: `Analyzing chunk 1 of ${totalChunks} (pages ${chunks[0].startPage}-${chunks[0].endPage})...`,
@@ -412,13 +412,13 @@ async function runChunkedAnalysis(
     // Wait between chunks to stay under the rate limit (30k tokens/min)
     if (i > 0) {
       const waitSec = Math.ceil(CHUNK_DELAY_MS / 1000);
-      updateAnalysis(analysisId, {
+      await updateAnalysis(analysisId, {
         currentStep: `Waiting ${waitSec}s for rate limit before chunk ${i + 1}...`,
       });
       await sleep(CHUNK_DELAY_MS);
     }
 
-    updateAnalysis(analysisId, {
+    await updateAnalysis(analysisId, {
       completedChunks: i,
       currentStep: `Analyzing section ${i + 1} of ${totalChunks} (pages ${chunk.startPage}-${chunk.endPage})...`,
     });
@@ -433,17 +433,17 @@ async function runChunkedAnalysis(
       );
     }
 
-    updateAnalysis(analysisId, { completedChunks: i + 1 });
+    await updateAnalysis(analysisId, { completedChunks: i + 1 });
   }
 
   // Wait before merge step to respect rate limits
-  updateAnalysis(analysisId, {
+  await updateAnalysis(analysisId, {
     currentStep: "Waiting before final synthesis...",
   });
   await sleep(CHUNK_DELAY_MS);
 
   // Merge all chunk results
-  updateAnalysis(analysisId, {
+  await updateAnalysis(analysisId, {
     currentStep: "Synthesizing results from all sections...",
   });
 
@@ -455,7 +455,7 @@ async function runChunkedAnalysis(
     totalChunks
   );
 
-  updateAnalysis(analysisId, { status: "completed", results });
+  await updateAnalysis(analysisId, { status: "completed", results });
 }
 
 // ==========================================
@@ -481,7 +481,7 @@ async function runAnalysis(
 
     console.log(`[Analysis ${analysisId}] PDF split into ${chunks.length} chunks, ${totalPages} total pages`);
 
-    updateAnalysis(analysisId, {
+    await updateAnalysis(analysisId, {
       totalPages,
       totalChunks: chunks.length,
     });
@@ -502,7 +502,7 @@ async function runAnalysis(
       errorMessage = error.message;
       console.error("Stack:", error.stack);
     }
-    updateAnalysis(analysisId, {
+    await updateAnalysis(analysisId, {
       status: "failed",
       error: errorMessage,
     });
@@ -596,7 +596,7 @@ export async function POST(request: NextRequest) {
 
     const analysisId = crypto.randomUUID();
 
-    setAnalysis(analysisId, {
+    await setAnalysis(analysisId, {
       id: analysisId,
       status: "processing",
       fileName,

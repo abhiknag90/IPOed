@@ -51,6 +51,8 @@ In your Vercel project: **Settings → Environment Variables**. Add:
 |----------|----------|-------------|
 | `ANTHROPIC_API_KEY` | Yes (for AI features) | Claude API key for document analysis & verdicts |
 | `BLOB_READ_WRITE_TOKEN` | For 4–10MB uploads | Vercel Blob token. Create a Blob store in Vercel Storage to enable 10MB PDF uploads (bypasses 4.5MB limit) |
+| `UPSTASH_REDIS_REST_URL` | **Yes on Vercel** | Upstash Redis URL. Required for document analysis to work across serverless instances (fixes 404 during processing) |
+| `UPSTASH_REDIS_REST_TOKEN` | **Yes on Vercel** | Upstash Redis token. Create a KV store in Vercel Storage or at [upstash.com](https://upstash.com) |
 | `FINNHUB_API_KEY` | No | US IPO data (Finnhub). Without it, sample data is used |
 | `IPOALERTS_API_KEY` | No | Indian IPO data. Without it, sample data is used |
 | `DATABASE_URL` | No | Neon Postgres (for future persistence features) |

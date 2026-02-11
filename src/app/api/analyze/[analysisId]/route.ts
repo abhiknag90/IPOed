@@ -7,7 +7,7 @@ export async function GET(
 ) {
   try {
     const { analysisId } = await params;
-    const analysis = getAnalysis(analysisId);
+    const analysis = await getAnalysis(analysisId);
 
     if (!analysis) {
       return NextResponse.json(

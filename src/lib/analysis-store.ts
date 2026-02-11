@@ -1,3 +1,4 @@
+import { Redis } from "@upstash/redis";
 import type { AnalysisResults } from "./analysis-types";
 
 export interface AnalysisEntry {
@@ -16,24 +17,67 @@ export interface AnalysisEntry {
   currentStep?: string;
 }
 
-// Use globalThis to ensure the store survives hot reloads and is shared across route handlers
+const KEY_PREFIX = "analysis:";
+const TTL_SECONDS = 3600; // 1 hour
+
+// In-memory fallback for local dev (no Redis)
 const globalStore = globalThis as unknown as { __analysisStore?: Map<string, AnalysisEntry> };
 if (!globalStore.__analysisStore) {
   globalStore.__analysisStore = new Map<string, AnalysisEntry>();
 }
-const store = globalStore.__analysisStore;
+const memoryStore = globalStore.__analysisStore;
 
-export function getAnalysis(id: string): AnalysisEntry | undefined {
-  return store.get(id);
+function getRedis(): Redis | null {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  return new Redis({ url, token });
 }
 
-export function setAnalysis(id: string, entry: AnalysisEntry): void {
-  store.set(id, entry);
+export async function getAnalysis(id: string): Promise<AnalysisEntry | undefined> {
+  const redis = getRedis();
+  if (redis) {
+    try {
+      const key = `${KEY_PREFIX}${id}`;
+      const raw = await redis.get<string>(key);
+      if (typeof raw === "string") {
+        return JSON.parse(raw) as AnalysisEntry;
+      }
+      return undefined;
+    } catch (e) {
+      console.error("[analysis-store] Redis get failed:", e);
+      return memoryStore.get(id);
+    }
+  }
+  return memoryStore.get(id);
 }
 
-export function updateAnalysis(id: string, update: Partial<AnalysisEntry>): void {
-  const existing = store.get(id);
+export async function setAnalysis(id: string, entry: AnalysisEntry): Promise<void> {
+  memoryStore.set(id, entry);
+  const redis = getRedis();
+  if (redis) {
+    try {
+      const key = `${KEY_PREFIX}${id}`;
+      await redis.set(key, JSON.stringify(entry), { ex: TTL_SECONDS });
+    } catch (e) {
+      console.error("[analysis-store] Redis set failed:", e);
+    }
+  }
+}
+
+export async function updateAnalysis(id: string, update: Partial<AnalysisEntry>): Promise<void> {
+  const existing = memoryStore.get(id);
   if (existing) {
-    store.set(id, { ...existing, ...update });
+    const merged = { ...existing, ...update };
+    memoryStore.set(id, merged);
+    const redis = getRedis();
+    if (redis) {
+      try {
+        const key = `${KEY_PREFIX}${id}`;
+        await redis.set(key, JSON.stringify(merged), { ex: TTL_SECONDS });
+      } catch (e) {
+        console.error("[analysis-store] Redis update failed:", e);
+      }
+    }
   }
 }
