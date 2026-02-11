@@ -12,7 +12,14 @@ import type { AnalysisResults } from "@/lib/analysis-types";
 import { sanitizeResults } from "@/lib/analysis-types";
 
 const MAX_PAGES = 1000;
-const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB for large documents
+const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB locally
+// Vercel serverless has 4.5MB request body limit — uploads over ~4.5MB fail with 413 before reaching our handler
+const VERCEL_MAX_BODY = 10 * 1024 * 1024; // 10MB (note: Vercel platform rejects ~4.5MB+ at the edge)
+
+/** Anthropic API rejects base64 with whitespace/newlines — ensure clean format */
+function sanitizeBase64ForAPI(b64: string): string {
+  return b64.replace(/\s/g, "");
+}
 
 const sampleResults: AnalysisResults = {
   companyName: "Sample Tech Corp",
@@ -192,7 +199,9 @@ async function runSingleAnalysis(
   }
   const prompt = ANALYSIS_PROMPT.replace(/{documentType}/g, documentType || "DRHP");
 
-  const response = await client.messages.create({
+  let response;
+  try {
+    response = await client.messages.create({
     model: "claude-sonnet-4-5-20250929",
     max_tokens: 8192,
     messages: [
@@ -212,8 +221,18 @@ async function runSingleAnalysis(
       },
     ],
   });
+  } catch (apiError) {
+    const err = apiError as Error & { status?: number; error?: { message?: string } };
+    const msg = err.message || err.error?.message || "";
+    if (msg.includes("expected pattern") || msg.includes("base64") || msg.includes("invalid")) {
+      throw new Error(
+        "PDF format issue: The document could not be processed. Try re-saving the PDF or use a smaller file (max 10MB)."
+      );
+    }
+    throw apiError;
+  }
 
-  const textContent = response.content.find((block) => block.type === "text");
+  const textContent = response!.content.find((block) => block.type === "text");
   if (!textContent || textContent.type !== "text") {
     throw new Error("No text response received from Claude");
   }
@@ -267,15 +286,18 @@ async function analyzeChunk(
     .replace(/{totalChunks}/g, String(chunk.totalChunks));
 
   // Build message content: PDF document or extracted text
+  const base64Data = chunk.base64Data
+    ? sanitizeBase64ForAPI(chunk.base64Data)
+    : undefined;
   const messageContent: Parameters<typeof client.messages.create>[0]["messages"][0]["content"] =
-    chunk.base64Data
+    base64Data
       ? [
           {
             type: "document" as const,
             source: {
               type: "base64" as const,
               media_type: "application/pdf" as const,
-              data: chunk.base64Data,
+              data: base64Data,
             },
           },
           { type: "text" as const, text: prompt },
@@ -288,7 +310,7 @@ async function analyzeChunk(
         ];
 
   console.log(
-    `[Chunk ${chunk.index + 1}/${chunk.totalChunks}] Sending ${chunk.base64Data ? "PDF document" : `text (${((chunk.textContent?.length || 0) / 1000).toFixed(0)}K chars)`} to Claude`
+    `[Chunk ${chunk.index + 1}/${chunk.totalChunks}] Sending ${base64Data ? "PDF document" : `text (${((chunk.textContent?.length || 0) / 1000).toFixed(0)}K chars)`} to Claude`
   );
 
   const response = await callWithRetry(() =>
@@ -465,7 +487,11 @@ async function runAnalysis(
     });
 
     if (chunks.length === 1 && chunks[0].base64Data) {
-      await runSingleAnalysis(analysisId, chunks[0].base64Data, docType);
+      await runSingleAnalysis(
+        analysisId,
+        sanitizeBase64ForAPI(chunks[0].base64Data),
+        docType
+      );
     } else {
       await runChunkedAnalysis(analysisId, chunks, docType, totalPages);
     }
@@ -485,31 +511,79 @@ async function runAnalysis(
 
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData();
-    const file = formData.get("file") as File;
-    const market = formData.get("market") as string;
-    const documentType = formData.get("documentType") as string;
+    const contentType = request.headers.get("content-type") || "";
+    let pdfBytes: Uint8Array;
+    let fileName: string;
+    let fileSize: number;
+    let market: string;
+    let documentType: string;
 
-    if (!file) {
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+    if (contentType.includes("application/json")) {
+      // Blob URL flow (for large files on Vercel)
+      const body = await request.json();
+      const { blobUrl } = body;
+      if (!blobUrl || typeof blobUrl !== "string") {
+        return NextResponse.json(
+          { error: "Missing blobUrl. Upload the file first." },
+          { status: 400 }
+        );
+      }
+      market = body.market || "india";
+      documentType = body.documentType || (market === "india" ? "drhp" : "s1");
+      fileName = body.fileName || "document.pdf";
+      fileSize = body.fileSize || 0;
+
+      const res = await fetch(blobUrl);
+      if (!res.ok) {
+        return NextResponse.json(
+          { error: "Failed to fetch uploaded file from blob storage" },
+          { status: 400 }
+        );
+      }
+      const arrayBuffer = await res.arrayBuffer();
+      pdfBytes = new Uint8Array(arrayBuffer);
+    } else {
+      // FormData flow (direct file upload)
+      const formData = await request.formData();
+      const file = formData.get("file") as File;
+      market = (formData.get("market") as string) || "india";
+      documentType =
+        (formData.get("documentType") as string) ||
+        (market === "india" ? "drhp" : "s1");
+
+      if (!file) {
+        return NextResponse.json(
+          { error: "No file uploaded" },
+          { status: 400 }
+        );
+      }
+
+      if (file.type !== "application/pdf") {
+        return NextResponse.json(
+          { error: "Only PDF files are accepted" },
+          { status: 400 }
+        );
+      }
+
+      const bodyLimit = process.env.VERCEL ? VERCEL_MAX_BODY : MAX_FILE_SIZE;
+      const bodyLimitMB = process.env.VERCEL ? 10 : 200;
+      if (file.size > bodyLimit) {
+        return NextResponse.json(
+          {
+            error:
+              process.env.VERCEL && file.size > VERCEL_MAX_BODY
+                ? `File too large for direct upload. Use a file under ${bodyLimitMB}MB or ensure Vercel Blob is configured for larger uploads.`
+                : `File size must be under ${bodyLimitMB}MB`,
+          },
+          { status: 400 }
+        );
+      }
+
+      const arrayBuffer = await file.arrayBuffer();
+      pdfBytes = new Uint8Array(arrayBuffer);
+      fileName = file.name;
+      fileSize = file.size;
     }
-
-    if (file.type !== "application/pdf") {
-      return NextResponse.json(
-        { error: "Only PDF files are accepted" },
-        { status: 400 }
-      );
-    }
-
-    if (file.size > MAX_FILE_SIZE) {
-      return NextResponse.json(
-        { error: "File size must be under 200MB" },
-        { status: 400 }
-      );
-    }
-
-    const arrayBuffer = await file.arrayBuffer();
-    const pdfBytes = new Uint8Array(arrayBuffer);
 
     // Check page count before proceeding
     const pageCount = await getPDFPageCount(pdfBytes);
@@ -525,8 +599,8 @@ export async function POST(request: NextRequest) {
     setAnalysis(analysisId, {
       id: analysisId,
       status: "processing",
-      fileName: file.name,
-      fileSize: file.size,
+      fileName,
+      fileSize,
       market,
       documentType,
       results: null,
@@ -544,8 +618,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       analysisId,
       status: "processing",
-      fileName: file.name,
-      fileSize: file.size,
+      fileName,
+      fileSize,
       market,
       documentType,
       totalPages: pageCount,

@@ -3,10 +3,13 @@
 import { useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
+import { upload } from "@vercel/blob/client";
 import { Upload, FileText, Sparkles, ArrowRight, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useMarket } from "@/lib/market-context";
+
+const BLOB_UPLOAD_THRESHOLD = 4 * 1024 * 1024; // 4MB — use Blob for larger files to bypass Vercel 4.5MB limit
 
 export default function AnalyzePage() {
   const router = useRouter();
@@ -44,23 +47,55 @@ export default function AnalyzePage() {
     setError(null);
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("market", market);
-      formData.append("documentType", market === "india" ? "drhp" : "s1");
+      const useBlobUpload = file.size > BLOB_UPLOAD_THRESHOLD;
 
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        body: formData,
-      });
+      if (useBlobUpload) {
+        // Upload to Vercel Blob first (bypasses 4.5MB request limit)
+        const blob = await upload(file.name, file, {
+          access: "public",
+          handleUploadUrl: "/api/analyze/upload",
+          multipart: file.size > 5 * 1024 * 1024,
+        });
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Upload failed");
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            blobUrl: blob.url,
+            fileName: file.name,
+            fileSize: file.size,
+            market,
+            documentType: market === "india" ? "drhp" : "s1",
+          }),
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || "Analysis failed");
+        }
+
+        const { analysisId } = await res.json();
+        router.push(`/analyze/${analysisId}`);
+      } else {
+        // Direct FormData for smaller files
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("market", market);
+        formData.append("documentType", market === "india" ? "drhp" : "s1");
+
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || "Upload failed");
+        }
+
+        const { analysisId } = await res.json();
+        router.push(`/analyze/${analysisId}`);
       }
-
-      const { analysisId } = await res.json();
-      router.push(`/analyze/${analysisId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setUploading(false);
@@ -137,7 +172,7 @@ export default function AnalyzePage() {
                     Drag & drop your {market === "india" ? "DRHP" : "S-1"} PDF here
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    or click to browse (Max 200MB, up to 1000 pages)
+                    or click to browse (Max 10MB, up to 1000 pages)
                   </p>
                   <label className="mt-4 inline-block">
                     <input
