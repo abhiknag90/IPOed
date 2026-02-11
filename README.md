@@ -1,4 +1,6 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# IPO'ed — IPO Intelligence Platform
+
+AI-powered IPO analysis for India and US markets. Track IPOs, analyze DRHP/S-1 documents, and get AI verdicts.
 
 ## Getting Started
 
@@ -31,6 +33,33 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 ## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 1. Push to GitHub
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Ensure your project is in a Git repository and pushed to GitHub.
+
+### 2. Import on Vercel
+
+1. Go to [vercel.com/new](https://vercel.com/new)
+2. Import your repository
+3. Vercel will auto-detect Next.js. Click **Deploy**.
+
+### 3. Configure Environment Variables
+
+In your Vercel project: **Settings → Environment Variables**. Add:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes (for AI features) | Claude API key for document analysis & verdicts |
+| `FINNHUB_API_KEY` | No | US IPO data (Finnhub). Without it, sample data is used |
+| `IPOALERTS_API_KEY` | No | Indian IPO data. Without it, sample data is used |
+| `DATABASE_URL` | No | Neon Postgres (for future persistence features) |
+
+**Minimum for full AI features:** Set `ANTHROPIC_API_KEY`.
+
+### 4. Redeploy
+
+After adding env vars, redeploy from the Vercel dashboard.
+
+---
+
+**Note:** Document analysis runs asynchronously. For large PDFs (>100 pages), processing can take several minutes. On Vercel Hobby, functions timeout at 10s; on Pro, up to 60s. Small documents (≤100 pages) typically complete within limits. For very large documents, consider Vercel Pro or a long-running worker.
