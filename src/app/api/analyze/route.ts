@@ -180,7 +180,7 @@ function parseJsonResponse(text: string): unknown {
 }
 
 // ==========================================
-// Single-chunk analysis (≤100 pages)
+// Single-chunk analysis (≤50 pages)
 // ==========================================
 
 async function runSingleAnalysis(
@@ -269,7 +269,7 @@ async function runSingleAnalysis(
 }
 
 // ==========================================
-// Multi-chunk analysis (>100 pages)
+// Multi-chunk analysis (>50 pages)
 // ==========================================
 
 async function analyzeChunk(
@@ -611,7 +611,7 @@ export async function POST(request: NextRequest) {
       error: null,
       createdAt: Date.now(),
       totalPages: pageCount,
-      totalChunks: Math.ceil(pageCount / 95),
+      totalChunks: pageCount <= 50 ? 1 : Math.ceil(pageCount / 30),
       completedChunks: 0,
       currentStep: "Preparing document...",
     });
