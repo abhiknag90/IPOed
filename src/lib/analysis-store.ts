@@ -49,7 +49,8 @@ export async function getAnalysis(id: string): Promise<AnalysisEntry | undefined
       return undefined;
     } catch (e) {
       console.error("[analysis-store] Redis get failed:", e);
-      return memoryStore.get(id);
+      // Do NOT fall back to memory — other instances have empty memory. 404 is correct.
+      return undefined;
     }
   }
   return memoryStore.get(id);
@@ -69,11 +70,26 @@ export async function setAnalysis(id: string, entry: AnalysisEntry): Promise<voi
 }
 
 export async function updateAnalysis(id: string, update: Partial<AnalysisEntry>): Promise<void> {
-  const existing = memoryStore.get(id);
+  let existing = memoryStore.get(id);
+  const redis = getRedis();
+
+  // If not in memory, try Redis (e.g. processing may run on a different instance)
+  if (!existing && redis) {
+    try {
+      const key = `${KEY_PREFIX}${id}`;
+      const raw = await redis.get<string>(key);
+      if (typeof raw === "string") {
+        existing = JSON.parse(raw) as AnalysisEntry;
+        memoryStore.set(id, existing);
+      }
+    } catch (e) {
+      console.error("[analysis-store] Redis get for update failed:", e);
+    }
+  }
+
   if (existing) {
     const merged = { ...existing, ...update };
     memoryStore.set(id, merged);
-    const redis = getRedis();
     if (redis) {
       try {
         const key = `${KEY_PREFIX}${id}`;

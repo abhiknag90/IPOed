@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { getAnthropicClient } from "@/lib/ai-client";
 import {
   ANALYSIS_PROMPT,
@@ -130,6 +131,9 @@ const sampleResults: AnalysisResults = {
     ],
   },
 };
+
+// Give analysis time to complete (Vercel Pro: up to 300s)
+export const maxDuration = 300;
 
 // Delay between chunk API calls to respect rate limits
 // Text chunks are much smaller than PDF chunks, so we can use shorter delays
@@ -612,8 +616,8 @@ export async function POST(request: NextRequest) {
       currentStep: "Preparing document...",
     });
 
-    // Fire and forget
-    runAnalysis(analysisId, pdfBytes, documentType);
+    // Run analysis after response so client gets analysisId immediately
+    after(() => runAnalysis(analysisId, pdfBytes, documentType));
 
     return NextResponse.json({
       analysisId,
